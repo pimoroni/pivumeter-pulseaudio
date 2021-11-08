@@ -7,13 +7,35 @@ int brightness = 255;
 uint8_t b_l[8] = {0};
 uint8_t b_r[9] = {0};
 
-int32_t peak_l = 0;
-int32_t peak_r = 0;
+const unsigned int num_samples = 2;
+int avg_l[num_samples] = {0};
+int avg_r[num_samples] = {0};
+unsigned int avg_l_idx = 0;
+unsigned int avg_r_idx = 0;
 
 namespace pivumeter {
     void PHATBeat::update(uint32_t l, uint32_t r) {
         int32_t meter_l = (l * 8 * brightness) / 16384;
         int32_t meter_r = (r * 8 * brightness) / 16384;
+
+        avg_l[avg_l_idx] = meter_l;
+        avg_r[avg_r_idx] = meter_r;
+
+        avg_l_idx ++;
+        avg_l_idx %= num_samples;
+
+        avg_r_idx ++;
+        avg_r_idx %= num_samples;
+
+        int64_t a_l = 0;
+        int64_t a_r = 0;
+        for(auto a = 0u; a < num_samples; a++) {
+            a_l += avg_l[a];
+            a_r += avg_r[a];
+        }
+
+        meter_l = a_l / num_samples;
+        meter_r = a_r / num_samples;
 
         for(auto led = 0u; led < 8u; led++) {
             b_l[led] = std::min(meter_l, brightness);

@@ -1,4 +1,5 @@
 #include <iostream>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <signal.h>
@@ -16,6 +17,8 @@ pa_mainloop_api *mainloop_api = NULL;
 pa_proplist *proplist = NULL;
 
 pivumeter::PHATBeat phatbeat = pivumeter::PHATBeat();
+
+std::chrono::time_point<std::chrono::high_resolution_clock> t_last_update;
 
 static void quit(int ret) {
     mainloop_api->quit(mainloop_api, ret);
@@ -51,18 +54,35 @@ static void pulse_stream_state_callback(pa_stream *stream, void *) {
 static void pulse_stream_read_callback(pa_stream *stream, size_t length, void *) {
     const void *p;
 
+    auto now = std::chrono::high_resolution_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_update);
+
     if (pa_stream_peek(stream, &p, &length) < 0) {
         std::cout << "pivumeter: pa_stream_peek() failed: " << pa_strerror(pa_context_errno(context)) << std::endl;
+	return;
     }
+
+    if(ms.count() < 5) {
+        pa_stream_drop(stream);
+        return;
+    }
+
+
+    /*const int16_t *channel = (const int16_t *)p;
+    phatbeat.update(channel[0], channel[1]);
+    phatbeat.render();
+
+    pa_stream_drop(stream);
+    return;*/
 
     // p is now a pointer to the stream
     // length is the number of bytes in the stream
-    //std::cout << "pivumeter: got " << (length / sizeof(uint16_t)) << "samples!" << std::endl;
+    //std::cout << "pivumeter: got " << (length / sizeof(int16_t)) << "samples!" << std::endl;
 
     int16_t peak_l = 0;
     int16_t peak_r = 0;
-    const uint16_t *samples = (const uint16_t *)p;
-    for(auto sample = 0u; sample < length / sizeof(uint16_t) / 2; sample += 2) {
+    const int16_t *samples = (const int16_t *)p;
+    for(auto sample = 0u; sample < length / sizeof(int16_t) / 2; sample += 2) {
         int16_t s_l = samples[sample];
         int16_t s_r = samples[sample + 1];
         if(s_l > peak_l) peak_l = s_l;
@@ -71,6 +91,7 @@ static void pulse_stream_read_callback(pa_stream *stream, size_t length, void *)
     //std::cout << "pivumeter: peak L:" << peak_l << " R:" << peak_r << std::endl;
     phatbeat.update(peak_l, peak_r);
     phatbeat.render();
+    t_last_update = now;
 
     pa_stream_drop(stream);
 }
@@ -82,6 +103,8 @@ static void pulse_monitor(const char* name, const pa_sample_spec &ss, const pa_c
         quit(1);
     }
 
+    t_last_update = std::chrono::high_resolution_clock::now();
+
     pa_sample_spec new_sample_spec;
     new_sample_spec.format = PA_SAMPLE_S16LE;
     new_sample_spec.rate = ss.rate;
@@ -90,7 +113,7 @@ static void pulse_monitor(const char* name, const pa_sample_spec &ss, const pa_c
     stream = pa_stream_new(context, "pivumeter", &new_sample_spec, &channel_map);
     pa_stream_set_state_callback(stream, pulse_stream_state_callback, NULL);
     pa_stream_set_read_callback(stream, pulse_stream_read_callback, NULL);
-    pa_stream_connect_record(stream, name, NULL, (enum pa_stream_flags) 0);
+    pa_stream_connect_record(stream, name, NULL, (enum pa_stream_flags) PA_STREAM_PEAK_DETECT );
 }
 
 static void pulse_get_sink_info_callback(pa_context *, const pa_sink_info *si, int is_last, void *) {
