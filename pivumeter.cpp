@@ -4,10 +4,18 @@
 #include <signal.h>
 #include <pulse/pulseaudio.h>
 
+#include "device/phat-beat.hpp"
+
+//const char* sink_name = "alsa_output.platform-bcm2835_audio.digital-stereo";
+//const char* sink_name = "alsa_output.platform-fef05700.hdmi.hdmi-stereo";
+const char* sink_name = "alsa_output.platform-soc_sound.stereo-fallback";
+
 pa_context *context = NULL;
 pa_stream *stream = NULL;
 pa_mainloop_api *mainloop_api = NULL;
 pa_proplist *proplist = NULL;
+
+pivumeter::PHATBeat phatbeat = pivumeter::PHATBeat();
 
 static void quit(int ret) {
     mainloop_api->quit(mainloop_api, ret);
@@ -51,17 +59,29 @@ static void pulse_stream_read_callback(pa_stream *stream, size_t length, void *)
     // length is the number of bytes in the stream
     //std::cout << "pivumeter: got " << (length / sizeof(uint16_t)) << "samples!" << std::endl;
 
-    int16_t peak = 0;
+    int16_t peak_l = 0;
+    int16_t peak_r = 0;
     const uint16_t *samples = (const uint16_t *)p;
-    for(auto sample = 0u; sample < length / sizeof(uint16_t); sample++) {
-        if(samples[sample] > peak) peak = samples[sample];
+    for(auto sample = 0u; sample < length / sizeof(uint16_t) / 2; sample += 2) {
+        int16_t s_l = samples[sample];
+        int16_t s_r = samples[sample + 1];
+        if(s_l > peak_l) peak_l = s_l;
+        if(s_r > peak_r) peak_r = s_r;
     }
-    std::cout << "pivumeter: peak" << peak << std::endl;
+    //std::cout << "pivumeter: peak L:" << peak_l << " R:" << peak_r << std::endl;
+    phatbeat.update(peak_l, peak_r);
+    phatbeat.render();
 
     pa_stream_drop(stream);
 }
 
 static void pulse_monitor(const char* name, const pa_sample_spec &ss, const pa_channel_map &channel_map) {
+    if(phatbeat.init() != 0) {
+        std::cout << "Failed to init output device!" << std::endl;
+        phatbeat.deinit();
+        quit(1);
+    }
+
     pa_sample_spec new_sample_spec;
     new_sample_spec.format = PA_SAMPLE_S16LE;
     new_sample_spec.rate = ss.rate;
@@ -103,7 +123,7 @@ static void pulse_state_callback(pa_context *context, void *) {
         case PA_CONTEXT_READY:
             std::cout << "pivumeter: context ready!" << std::endl;
 
-            pa_operation_unref(pa_context_get_sink_info_by_name(context, "alsa_output.platform-bcm2835_audio.digital-stereo", pulse_get_sink_info_callback, NULL));
+            pa_operation_unref(pa_context_get_sink_info_by_name(context, sink_name, pulse_get_sink_info_callback, NULL));
             break;
         case PA_CONTEXT_FAILED:
             std::cout << "pivumeter: context failed!" << std::endl;
@@ -140,6 +160,8 @@ int main(int argc, char *argv[]) {
         std::cout << "pa_mainloop_run() failed!" << std::endl;
         goto quit;
     }
+
+    phatbeat.deinit();
 
     return 0;
 

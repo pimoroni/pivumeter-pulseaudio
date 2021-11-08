@@ -6,6 +6,7 @@ project("pivumeter")
 
 add_executable(pivumeter
     pivumeter.cpp
+    device/phat-beat.cpp
 )
 
-target_link_libraries(pivumeter pulse)
+target_link_libraries(pivumeter pulse gpiod)
